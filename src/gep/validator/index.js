@@ -14,9 +14,9 @@ const { runInSandbox } = require('./sandboxExecutor');
 const { buildReportPayload, submitReport } = require('./reporter');
 const { ensureValidatorStake } = require('./stakeBootstrap');
 const { readFeatureFlag } = require('../featureFlags');
+const { resolveHubUrl: resolveDefaultHubUrl } = require('../../config');
 
 const FETCH_TIMEOUT_MS = Number(process.env.EVOLVER_VALIDATOR_FETCH_TIMEOUT_MS) || 8_000;
-const HUB_URL_FALLBACK = process.env.A2A_HUB_URL || process.env.EVOMAP_HUB_URL || 'https://evomap.ai';
 const MAX_TASKS_PER_CYCLE = Math.max(1, Number(process.env.EVOLVER_VALIDATOR_MAX_TASKS_PER_CYCLE) || 2);
 
 // Three-tier resolution:
@@ -39,7 +39,7 @@ function resolveHubUrl() {
     const u = getHubUrl && getHubUrl();
     if (u && typeof u === 'string') return u;
   } catch (_) {}
-  return HUB_URL_FALLBACK;
+  return resolveDefaultHubUrl();
 }
 
 /**
@@ -229,6 +229,18 @@ async function _daemonTick() {
 function startValidatorDaemon() {
   if (_daemonRunning) return false;
   _daemonRunning = true;
+  if (isValidatorEnabled()) {
+    // Surface an explicit notice every time validator mode starts so that users
+    // who do not read docs cannot later claim they were unaware the validator
+    // consumes network / stake / CPU. See GH issue #451.
+    try {
+      console.log(
+        '[Validator] Validator mode is ENABLED. Your node will participate in ' +
+        'Hub validation tasks: CPU, network bandwidth, and staked credits WILL ' +
+        'be used. To opt out, set EVOLVER_VALIDATOR_ENABLED=false (or unset it).'
+      );
+    } catch (_) { /* console unavailable -- non-fatal */ }
+  }
   _daemonTimer = setTimeout(_daemonTick, DAEMON_FIRST_DELAY_MS);
   return true;
 }
