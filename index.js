@@ -74,6 +74,17 @@ function getLastSignals(statePath) {
   }
 }
 
+function exportRuntimeAssets() {
+  try {
+    const exporter = require('./scripts/export-runtime-assets');
+    if (exporter && typeof exporter.main === 'function') {
+      exporter.main();
+    }
+  } catch (e) {
+    console.warn('[Export] Failed to export runtime assets: ' + (e && e.message ? e.message : e));
+  }
+}
+
 function normalizeRole(value) {
   return String(value || '').trim().toLowerCase();
 }
@@ -111,9 +122,15 @@ function sanitizeBridgedUserText(text) {
   const cleaned = lines.filter((line) => {
     const t = line.trim();
     if (!t) return false;
-    return !/^\*{0,2}assistant\*{0,2}\s*:/i.test(t);
+    if (/^\*{0,2}assistant\*{0,2}\s*:/i.test(t)) return false;
+    if (t.includes('</user_query>')) return false;
+    if (t.includes('**USER**') || t.includes('**ASSISTANT**')) return false;
+    if (/^<user_query>$/i.test(t) || /^<\/user_query>$/i.test(t)) return false;
+    return true;
   });
-  return cleaned.join('\n').trim();
+  const joined = cleaned.join('\n').replace(/\s+/g, ' ').trim();
+  if (!joined) return '';
+  return joined.slice(0, 400);
 }
 
 function ensureCursorTranscriptBridge() {
@@ -270,7 +287,7 @@ async function main() {
 
         process.env.EVOLVE_LOOP = 'true';
         if (!process.env.EVOLVE_BRIDGE) {
-          process.env.EVOLVE_BRIDGE = 'false';
+          process.env.EVOLVE_BRIDGE = 'true';
         }
         console.log(`Loop mode enabled (internal daemon, bridge=${process.env.EVOLVE_BRIDGE}, verbose=${isVerbose}).`);
 
@@ -520,6 +537,7 @@ async function main() {
       if (res && res.capsule) console.log(JSON.stringify(res.capsule, null, 2));
 
       if (res && res.ok && !dryRun) {
+        exportRuntimeAssets();
         try {
           const { shouldDistill, prepareDistillation, autoDistill, shouldDistillFromFailures, autoDistillFromFailures } = require('./src/gep/skillDistiller');
           const { readStateForSolidify } = require('./src/gep/solidify');
@@ -670,7 +688,6 @@ async function main() {
     const { getEvolutionDir, getRepoRoot } = require('./src/gep/paths');
     const { loadGenes } = require('./src/gep/assetStore');
     const { execSync } = require('child_process');
-    const MAX_EXEC_BUFFER = 10 * 1024 * 1024; // 10MB; see GHSA reports / #451
 
     const statePath = path.join(getEvolutionDir(), 'evolution_solidify_state.json');
     const state = readJsonSafe(statePath);
@@ -691,9 +708,9 @@ async function main() {
     const repoRoot = getRepoRoot();
     let diff = '';
     try {
-      const unstaged = execSync('git diff', { cwd: repoRoot, encoding: 'utf8', timeout: 30000, maxBuffer: MAX_EXEC_BUFFER }).trim();
-      const staged = execSync('git diff --cached', { cwd: repoRoot, encoding: 'utf8', timeout: 30000, maxBuffer: MAX_EXEC_BUFFER }).trim();
-      const untracked = execSync('git ls-files --others --exclude-standard', { cwd: repoRoot, encoding: 'utf8', timeout: 10000, maxBuffer: MAX_EXEC_BUFFER }).trim();
+      const unstaged = execSync('git diff', { cwd: repoRoot, encoding: 'utf8', timeout: 30000 }).trim();
+      const staged = execSync('git diff --cached', { cwd: repoRoot, encoding: 'utf8', timeout: 30000 }).trim();
+      const untracked = execSync('git ls-files --others --exclude-standard', { cwd: repoRoot, encoding: 'utf8', timeout: 10000 }).trim();
       if (staged) diff += '=== Staged Changes ===\n' + staged + '\n\n';
       if (unstaged) diff += '=== Unstaged Changes ===\n' + unstaged + '\n\n';
       if (untracked) diff += '=== Untracked Files ===\n' + untracked + '\n';
@@ -764,6 +781,9 @@ async function main() {
         const st = res && res.ok ? 'SUCCESS' : 'FAILED';
         console.log(`[SOLIDIFY] ${st}`);
         if (res && res.gene) console.log(JSON.stringify(res.gene, null, 2));
+        if (res && res.ok) {
+          exportRuntimeAssets();
+        }
         if (res && res.hubReviewPromise) {
           await res.hubReviewPromise;
         }
@@ -775,8 +795,8 @@ async function main() {
     } else if (args.includes('--reject')) {
       console.log('\n[Review] Rejected. Rolling back changes...');
       try {
-        execSync('git checkout -- .', { cwd: repoRoot, encoding: 'utf8', timeout: 30000, maxBuffer: MAX_EXEC_BUFFER });
-        execSync('git clean -fd', { cwd: repoRoot, encoding: 'utf8', timeout: 30000, maxBuffer: MAX_EXEC_BUFFER });
+        execSync('git checkout -- .', { cwd: repoRoot, encoding: 'utf8', timeout: 30000 });
+        execSync('git clean -fd', { cwd: repoRoot, encoding: 'utf8', timeout: 30000 });
         const evolDir = getEvolutionDir();
         const sp = path.join(evolDir, 'evolution_solidify_state.json');
         if (fs.existsSync(sp)) {
