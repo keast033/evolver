@@ -32,7 +32,32 @@
       "validation": [
         "node scripts/validate-modules.js ./src/evolve ./src/gep/solidify ./src/gep/policyCheck ./src/gep/selector ./src/gep/memoryGraph ./src/gep/assetStore",
         "node scripts/validate-suite.js"
-      ]
+      ],
+      "learning_history": [
+        {
+          "at": "2026-04-21T06:58:26.458Z",
+          "outcome": "success",
+          "mode": "none",
+          "reason_class": "unknown",
+          "retryable": false,
+          "learning_signals": [
+            "protocol_drift",
+            "user_feature_request",
+            "high_failure_ratio",
+            "force_innovation_after_repair_loop"
+          ]
+        }
+      ],
+      "epigenetic_marks": [
+        {
+          "context": "win32/x64/v24.12.0",
+          "boost": 0.1,
+          "reason": "success_in_environment",
+          "created_at": "2026-04-21T06:58:26.458Z"
+        }
+      ],
+      "schema_version": "1.6.0",
+      "asset_id": "sha256:47f342bd66521a11c396f19fce72562c428f7f2f67956b786ca6208cadbf0677"
     },
     {
       "type": "Gene",
@@ -103,8 +128,53 @@
       "validation": [
         "node scripts/validate-modules.js ./src/evolve ./src/gep/solidify ./src/gep/policyCheck ./src/gep/mutation ./src/gep/personality",
         "node scripts/validate-suite.js"
-      ]
+      ],
+      "learning_history": [
+        {
+          "at": "2026-04-21T06:08:11.139Z",
+          "outcome": "failed",
+          "mode": "soft",
+          "reason_class": "validation",
+          "retryable": true,
+          "learning_signals": [
+            "problem:reliability",
+            "action:repair",
+            "problem:protocol",
+            "action:optimize",
+            "area:prompt",
+            "problem:capability",
+            "action:innovate",
+            "risk:validation"
+          ]
+        }
+      ],
+      "anti_patterns": [
+        {
+          "at": "2026-04-21T06:08:11.139Z",
+          "mode": "soft",
+          "reason_class": "validation",
+          "learning_signals": [
+            "problem:reliability",
+            "action:repair",
+            "problem:protocol",
+            "action:optimize",
+            "area:prompt",
+            "problem:capability",
+            "action:innovate",
+            "risk:validation"
+          ]
+        }
+      ],
+      "epigenetic_marks": [
+        {
+          "context": "win32/x64/v24.12.0",
+          "boost": -0.1,
+          "reason": "failure_in_environment",
+          "created_at": "2026-04-21T06:08:11.140Z"
+        }
+      ],
+      "schema_version": "1.6.0",
+      "asset_id": "sha256:bb80e0875e252e1c24a2836a9990590410cd49cfaedbabf8812cd4f12286211d"
     }
   ]
 }
-

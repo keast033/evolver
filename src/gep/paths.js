@@ -123,16 +123,134 @@ function getSkillsDir() {
   return process.env.SKILLS_DIR || path.join(getWorkspaceRoot(), 'skills');
 }
 
+function hasJsonlFiles(dirPath) {
+  try {
+    if (!dirPath || !fs.existsSync(dirPath)) return false;
+    const entries = fs.readdirSync(dirPath);
+    for (const name of entries) {
+      const full = path.join(dirPath, name);
+      let stat = null;
+      try {
+        stat = fs.statSync(full);
+      } catch (_err) {
+        continue;
+      }
+      if (stat.isFile() && name.toLowerCase().endsWith('.jsonl')) return true;
+      // Cursor stores transcripts under agent-transcripts/<uuid>/<uuid>.jsonl
+      // in many environments; support one nested level.
+      if (stat.isDirectory()) {
+        try {
+          const nested = fs.readdirSync(full);
+          if (nested.some((child) => child.toLowerCase().endsWith('.jsonl'))) {
+            return true;
+          }
+        } catch (_err) {}
+      }
+    }
+    return false;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function getLatestJsonlDir(baseDir) {
+  if (!baseDir || !fs.existsSync(baseDir)) return null;
+  const candidates = [];
+  try {
+    const entries = fs.readdirSync(baseDir);
+    for (const name of entries) {
+      const full = path.join(baseDir, name);
+      let stat = null;
+      try {
+        stat = fs.statSync(full);
+      } catch (_err) {
+        continue;
+      }
+      if (stat.isFile() && name.toLowerCase().endsWith('.jsonl')) {
+        candidates.push({ dir: baseDir, mtimeMs: stat.mtimeMs || 0 });
+      } else if (stat.isDirectory()) {
+        try {
+          const nested = fs.readdirSync(full)
+            .filter((child) => child.toLowerCase().endsWith('.jsonl'))
+            .map((child) => {
+              const childPath = path.join(full, child);
+              let childStat = null;
+              try { childStat = fs.statSync(childPath); } catch (_e) {}
+              return { dir: full, mtimeMs: childStat ? (childStat.mtimeMs || 0) : 0 };
+            });
+          candidates.push(...nested);
+        } catch (_err) {}
+      }
+    }
+  } catch (_err) {
+    return null;
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates[0].dir;
+}
+
+function findCursorTranscriptDir() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return null;
+  const projectsRoot = path.join(home, '.cursor', 'projects');
+  if (!fs.existsSync(projectsRoot)) return null;
+
+  let projectDirs = [];
+  try {
+    projectDirs = fs.readdirSync(projectsRoot)
+      .map((name) => path.join(projectsRoot, name))
+      .filter((p) => {
+        try {
+          return fs.statSync(p).isDirectory();
+        } catch (_err) {
+          return false;
+        }
+      });
+  } catch (_err) {
+    return null;
+  }
+
+  const preferredProjectId = String(process.env.EVOLVER_CURSOR_PROJECT_ID || '').trim();
+  if (preferredProjectId) {
+    const preferred = path.join(projectsRoot, preferredProjectId, 'agent-transcripts');
+    const preferredDir = getLatestJsonlDir(preferred);
+    if (preferredDir) return preferredDir;
+  }
+
+  const candidates = [];
+  for (const projectDir of projectDirs) {
+    const transcriptsDir = path.join(projectDir, 'agent-transcripts');
+    const latestDir = getLatestJsonlDir(transcriptsDir);
+    if (!latestDir) continue;
+    let mtimeMs = 0;
+    try {
+      mtimeMs = fs.statSync(latestDir).mtimeMs || 0;
+    } catch (_err) {}
+    candidates.push({ dir: latestDir, mtimeMs });
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates[0].dir;
+}
+
 // Resolve the OpenClaw `sessions` directory for the agent that actually
 // matches the current EVOLVER_SESSION_SCOPE (fixes #371).
 //
 // Precedence:
 //   1. AGENT_SESSIONS_DIR         explicit override
-//   2. EVOLVER_SESSION_SCOPE with a `workspace-<agent>` prefix =>
+//   2. EVOLVER_SESSION_LOGS_DIR   explicit transcript override
+//   3. Cursor agent-transcripts   auto-discovery
+//   4. EVOLVER_SESSION_SCOPE with a `workspace-<agent>` prefix =>
 //      ~/.openclaw/agents/<agent>/sessions
-//   3. AGENT_NAME (defaults to "main")   pre-#371 behavior
+//   5. AGENT_NAME (defaults to "main")   pre-#371 behavior
 function getAgentSessionsDir() {
   if (process.env.AGENT_SESSIONS_DIR) return process.env.AGENT_SESSIONS_DIR;
+  if (process.env.EVOLVER_SESSION_LOGS_DIR) return process.env.EVOLVER_SESSION_LOGS_DIR;
+
+  const cursorTranscripts = findCursorTranscriptDir();
+  if (cursorTranscripts) return cursorTranscripts;
 
   const scope = getSessionScope();
   let agentName = null;
@@ -200,6 +318,9 @@ module.exports = {
   getSkillsDir,
   getSessionScope,
   getAgentSessionsDir,
+  hasJsonlFiles,
+  getLatestJsonlDir,
+  findCursorTranscriptDir,
   readSessionCwdFromHead,
   getNarrativePath,
   getEvolutionPrinciplesPath,

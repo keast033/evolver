@@ -2,7 +2,7 @@
 const evolve = require('./src/evolve');
 const { solidify } = require('./src/gep/solidify');
 const path = require('path');
-const { getRepoRoot } = require('./src/gep/paths');
+const { getRepoRoot, getMemoryDir, findCursorTranscriptDir } = require('./src/gep/paths');
 try { require('dotenv').config({ path: path.join(getRepoRoot(), '.env') }); } catch (e) { console.warn('[Evolver] Warning: dotenv not found or failed to load .env'); }
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -74,6 +74,107 @@ function getLastSignals(statePath) {
   }
 }
 
+function normalizeRole(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isUserRoleRecord(record) {
+  if (!record || typeof record !== 'object') return false;
+  const direct = [record.role, record.sender, record.author, record.source];
+  if (direct.some((v) => normalizeRole(v) === 'user' || normalizeRole(v) === 'human')) return true;
+  if (record.message && typeof record.message === 'object') {
+    const nested = [record.message.role, record.message.sender, record.message.author, record.message.source];
+    return nested.some((v) => normalizeRole(v) === 'user' || normalizeRole(v) === 'human');
+  }
+  return false;
+}
+
+function extractCursorRecordText(record) {
+  if (!record || typeof record !== 'object') return '';
+  if (typeof record.text === 'string' && record.text.trim()) return record.text.trim();
+  const msg = record.message;
+  if (msg && typeof msg.content === 'string') return msg.content.trim();
+  if (msg && Array.isArray(msg.content)) {
+    return msg.content
+      .map((chunk) => (chunk && typeof chunk.text === 'string' ? chunk.text : ''))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+  return '';
+}
+
+function sanitizeBridgedUserText(text) {
+  const raw = String(text || '');
+  if (!raw.trim()) return '';
+  const lines = raw.split(/\r?\n/);
+  const cleaned = lines.filter((line) => {
+    const t = line.trim();
+    if (!t) return false;
+    return !/^\*{0,2}assistant\*{0,2}\s*:/i.test(t);
+  });
+  return cleaned.join('\n').trim();
+}
+
+function ensureCursorTranscriptBridge() {
+  const cursorDir = findCursorTranscriptDir();
+  if (!cursorDir) return null;
+
+  const files = fs.readdirSync(cursorDir)
+    .filter((name) => name.toLowerCase().endsWith('.jsonl'))
+    .map((name) => {
+      const p = path.join(cursorDir, name);
+      let mtimeMs = 0;
+      try { mtimeMs = fs.statSync(p).mtimeMs || 0; } catch (e) {}
+      return { p, mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  if (files.length === 0) return null;
+
+  const transcript = files[0].p;
+  const raw = fs.readFileSync(transcript, 'utf8');
+  const lines = raw.split(/\r?\n/).filter(Boolean);
+  const bridgedLines = [];
+  for (const line of lines) {
+    let rec = null;
+    try { rec = JSON.parse(line); } catch (e) { continue; }
+    if (!isUserRoleRecord(rec)) continue;
+    const text = sanitizeBridgedUserText(extractCursorRecordText(rec));
+    if (!text) continue;
+    bridgedLines.push(JSON.stringify({
+      role: 'user',
+      message: {
+        content: [
+          { type: 'text', text },
+        ],
+      },
+      timestamp: new Date().toISOString(),
+    }));
+  }
+  if (bridgedLines.length === 0) return null;
+
+  const bridgeDir = path.join(getMemoryDir(), 'cursor-session-bridge');
+  fs.mkdirSync(bridgeDir, { recursive: true });
+  const bridgeFile = path.join(bridgeDir, 'latest.jsonl');
+  fs.writeFileSync(bridgeFile, bridgedLines.join('\n') + '\n', 'utf8');
+
+  process.env.EVOLVER_SESSION_LOGS_DIR = bridgeDir;
+
+  const disableMirror = /^(1|true)$/i.test(String(process.env.EVOLVER_DISABLE_OPENCLAW_MIRROR || '').trim());
+  if (!disableMirror) {
+    const agentName = String(process.env.AGENT_NAME || 'main').trim() || 'main';
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    if (home) {
+      const openClawDir = path.join(home, '.openclaw', 'agents', agentName, 'sessions');
+      fs.mkdirSync(openClawDir, { recursive: true });
+      fs.writeFileSync(path.join(openClawDir, 'cursor-bridge-latest.jsonl'), bridgedLines.join('\n') + '\n', 'utf8');
+      process.env.AGENT_SESSIONS_DIR = openClawDir;
+    }
+  }
+
+  return { bridgeFile, sourceFile: transcript, count: bridgedLines.length };
+}
+
 // Singleton Guard - prevent multiple evolver daemon instances
 function acquireLock() {
   const lockFile = path.join(__dirname, 'evolver.pid');
@@ -115,6 +216,12 @@ function releaseLock() {
 }
 
 async function main() {
+  try {
+    ensureCursorTranscriptBridge();
+  } catch (e) {
+    console.warn('[Bridge] Failed to build cursor transcript bridge: ' + (e.message || e));
+  }
+
   const args = process.argv.slice(2);
   const command = args[0];
   const isLoop = args.includes('--loop') || args.includes('--mad-dog');

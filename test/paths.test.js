@@ -339,7 +339,7 @@ describe('getWorkspaceRoot', () => {
 
 describe('getAgentSessionsDir', () => {
   const savedEnv = {};
-  const envKeys = ['AGENT_SESSIONS_DIR', 'AGENT_NAME', 'EVOLVER_SESSION_SCOPE', 'HOME'];
+  const envKeys = ['AGENT_SESSIONS_DIR', 'EVOLVER_SESSION_LOGS_DIR', 'EVOLVER_CURSOR_PROJECT_ID', 'AGENT_NAME', 'EVOLVER_SESSION_SCOPE', 'HOME', 'USERPROFILE'];
 
   beforeEach(() => {
     for (const k of envKeys) {
@@ -359,6 +359,12 @@ describe('getAgentSessionsDir', () => {
     process.env.AGENT_SESSIONS_DIR = '/tmp/override/sessions';
     const { getAgentSessionsDir } = freshRequire('../src/gep/paths');
     assert.equal(getAgentSessionsDir(), '/tmp/override/sessions');
+  });
+
+  it('uses EVOLVER_SESSION_LOGS_DIR when AGENT_SESSIONS_DIR is not set', () => {
+    process.env.EVOLVER_SESSION_LOGS_DIR = '/tmp/cursor/agent-transcripts';
+    const { getAgentSessionsDir } = freshRequire('../src/gep/paths');
+    assert.equal(getAgentSessionsDir(), '/tmp/cursor/agent-transcripts');
   });
 
   it('derives agent name from workspace-<name> scope', () => {

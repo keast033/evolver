@@ -1,6 +1,6 @@
 // Usage: node scripts/validate-suite.js [test-glob-pattern]
 // Runs the evolver test suite -- repo root is derived from script location, no shell glob needed.
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -22,7 +22,7 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const cmd = 'node --test ' + files.join(' ');
+const testArgs = ['--test', ...files];
 const env = Object.assign({}, process.env, {
   NODE_ENV: 'test',
   EVOLVER_REPO_ROOT,
@@ -32,7 +32,7 @@ delete env.EVOLVE_BRIDGE;
 delete env.OPENCLAW_WORKSPACE;
 
 try {
-  const output = execSync(cmd, {
+  const output = execFileSync(process.execPath, testArgs, {
     cwd: EVOLVER_REPO_ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
     timeout: 180000,
