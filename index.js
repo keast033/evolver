@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-const evolve = require('./src/evolve');
 const { solidify } = require('./src/gep/solidify');
 const path = require('path');
 const { getRepoRoot, getMemoryDir, findCursorTranscriptDir } = require('./src/gep/paths');
@@ -239,6 +238,10 @@ async function main() {
     console.warn('[Bridge] Failed to build cursor transcript bridge: ' + (e.message || e));
   }
 
+  // IMPORTANT: load evolve AFTER bridge env is prepared, otherwise the evolve
+  // module may capture stale AGENT_SESSIONS_DIR / EVOLVER_SESSION_LOGS_DIR.
+  const evolve = require('./src/evolve');
+
   const args = process.argv.slice(2);
   const command = args[0];
   const isLoop = args.includes('--loop') || args.includes('--mad-dog');
@@ -287,7 +290,7 @@ async function main() {
 
         process.env.EVOLVE_LOOP = 'true';
         if (!process.env.EVOLVE_BRIDGE) {
-          process.env.EVOLVE_BRIDGE = 'true';
+          process.env.EVOLVE_BRIDGE = 'false';
         }
         console.log(`Loop mode enabled (internal daemon, bridge=${process.env.EVOLVE_BRIDGE}, verbose=${isVerbose}).`);
 
