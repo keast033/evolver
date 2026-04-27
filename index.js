@@ -5,6 +5,7 @@ const { getRepoRoot, getMemoryDir, findCursorTranscriptDir } = require('./src/ge
 try { require('dotenv').config({ path: path.join(getRepoRoot(), '.env') }); } catch (e) { console.warn('[Evolver] Warning: dotenv not found or failed to load .env'); }
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { initCommandLog, logCursorBridge, logSelectedGene, logSignals, logSessionSummary, logResult, flushCommandLog } = require('./src/gep/commandLogger');
 
 function sleepMs(ms) {
   const n = parseInt(String(ms), 10);
@@ -232,8 +233,17 @@ function releaseLock() {
 }
 
 async function main() {
+  const args = process.argv.slice(2);
+  const command = args[0];
+
+  // 初始化命令日志
+  initCommandLog(command, args);
+
   try {
-    ensureCursorTranscriptBridge();
+    const bridgeResult = ensureCursorTranscriptBridge();
+    if (bridgeResult) {
+      logCursorBridge(bridgeResult);
+    }
   } catch (e) {
     console.warn('[Bridge] Failed to build cursor transcript bridge: ' + (e.message || e));
   }
@@ -242,8 +252,6 @@ async function main() {
   // module may capture stale AGENT_SESSIONS_DIR / EVOLVER_SESSION_LOGS_DIR.
   const evolve = require('./src/evolve');
 
-  const args = process.argv.slice(2);
-  const command = args[0];
   const isLoop = args.includes('--loop') || args.includes('--mad-dog');
   const isVerbose = args.includes('--verbose') || args.includes('-v') ||
     String(process.env.EVOLVER_VERBOSE || '').toLowerCase() === 'true';
@@ -261,7 +269,8 @@ async function main() {
     }
 
     console.log('Starting evolver...');
-    
+    logResult(true, 'Evolver 启动');
+
     if (isLoop) {
         // Internal daemon loop (no wrapper required).
         if (!acquireLock()) process.exit(0);
@@ -506,8 +515,11 @@ async function main() {
         // Normal Single Run
         try {
             await evolve.run();
+            logResult(true, 'Evolution 运行完成');
         } catch (error) {
             console.error('Evolution failed:', error);
+            logResult(false, 'Evolution 运行失败: ' + (error.message || error));
+            flushCommandLog();
             process.exit(1);
         }
     }
@@ -517,6 +529,9 @@ async function main() {
     console.log('Evolver finished. If you use this project, consider starring the upstream repository.');
     console.log('Upstream: https://github.com/EvoMap/evolver');
     console.log('=======================================================\n');
+
+    // 刷新命令日志
+    flushCommandLog();
     
   } else if (command === 'solidify') {
     const dryRun = args.includes('--dry-run');
@@ -535,9 +550,19 @@ async function main() {
       });
       const st = res && res.ok ? 'SUCCESS' : 'FAILED';
       console.log(`[SOLIDIFY] ${st}`);
-      if (res && res.gene) console.log(JSON.stringify(res.gene, null, 2));
-      if (res && res.event) console.log(JSON.stringify(res.event, null, 2));
+      if (res && res.gene) {
+        console.log(JSON.stringify(res.gene, null, 2));
+        logSelectedGene(res.gene.id, res.gene.category, res.gene.summary);
+      }
+      if (res && res.event) {
+        console.log(JSON.stringify(res.event, null, 2));
+        if (res.event.signals) {
+          logSignals(res.event.signals);
+        }
+      }
       if (res && res.capsule) console.log(JSON.stringify(res.capsule, null, 2));
+
+      logResult(res && res.ok, `Solidify ${st}`);
 
       if (res && res.ok && !dryRun) {
         exportRuntimeAssets();
@@ -582,6 +607,9 @@ async function main() {
       if (res && res.hubReviewPromise) {
         await res.hubReviewPromise;
       }
+
+      // 刷新命令日志
+      flushCommandLog();
 
       // Post-solidify urgent questions: when solidify fails or produces a
       // low-quality outcome, generate questions and send them to Hub immediately.
@@ -653,6 +681,8 @@ async function main() {
       process.exit(res && res.ok ? 0 : 2);
     } catch (error) {
       console.error('[SOLIDIFY] Error:', error);
+      logResult(false, 'Solidify 错误: ' + (error.message || error));
+      flushCommandLog();
       process.exit(2);
     }
   } else if (command === 'distill') {
@@ -699,12 +729,16 @@ async function main() {
     if (!lastRun || !lastRun.run_id) {
       console.log('[Review] No pending evolution run to review.');
       console.log('Run "node index.js run" first to produce changes, then review before solidifying.');
+      logResult(true, 'Review: 无待审查的运行');
+      flushCommandLog();
       process.exit(0);
     }
 
     const lastSolid = state && state.last_solidify ? state.last_solidify : null;
     if (lastSolid && String(lastSolid.run_id) === String(lastRun.run_id)) {
       console.log('[Review] Last run has already been solidified. Nothing to review.');
+      logResult(true, 'Review: 已经固化，无需审查');
+      flushCommandLog();
       process.exit(0);
     }
 
@@ -726,6 +760,14 @@ async function main() {
     const gene = geneId ? genes.find(g => g && g.type === 'Gene' && g.id === geneId) : null;
     const signals = Array.isArray(lastRun.signals) ? lastRun.signals : [];
     const mutation = lastRun.mutation || null;
+
+    // 记录 Gene 和信号信息
+    if (gene) {
+      logSelectedGene(gene.id, gene.category, gene.summary);
+    }
+    if (signals.length > 0) {
+      logSignals(signals);
+    }
 
     console.log('\n' + '='.repeat(60));
     console.log('[Review] Pending evolution run: ' + lastRun.run_id);
@@ -784,15 +826,22 @@ async function main() {
         const st = res && res.ok ? 'SUCCESS' : 'FAILED';
         console.log(`[SOLIDIFY] ${st}`);
         if (res && res.gene) console.log(JSON.stringify(res.gene, null, 2));
+
+        logResult(res && res.ok, `Review --approve: Solidify ${st}`);
+
         if (res && res.ok) {
           exportRuntimeAssets();
         }
         if (res && res.hubReviewPromise) {
           await res.hubReviewPromise;
         }
+
+        flushCommandLog();
         process.exit(res && res.ok ? 0 : 2);
       } catch (error) {
         console.error('[SOLIDIFY] Error:', error);
+        logResult(false, 'Review --approve 错误: ' + (error.message || error));
+        flushCommandLog();
         process.exit(2);
       }
     } else if (args.includes('--reject')) {
@@ -812,13 +861,19 @@ async function main() {
           }
         }
         console.log('[Review] Changes rolled back.');
+        logResult(true, 'Review --reject: 已回滚更改');
+        flushCommandLog();
       } catch (e) {
         console.error('[Review] Rollback failed:', e.message || e);
+        logResult(false, 'Review --reject 回滚失败: ' + (e.message || e));
+        flushCommandLog();
         process.exit(2);
       }
     } else {
       console.log('\nTo approve and solidify:  node index.js review --approve');
       console.log('To reject and rollback:   node index.js review --reject');
+      logResult(true, 'Review: 显示待审查信息');
+      flushCommandLog();
     }
 
   } else if (command === 'fetch') {

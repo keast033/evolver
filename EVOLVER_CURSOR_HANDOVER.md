@@ -825,3 +825,135 @@ Evolver 在 Cursor 的核心闭环已形成：
    - `powershell -ExecutionPolicy Bypass -File ".\start-evolver.ps1" -Mode loop`
 
 ---
+
+## 21. 2026-04-24 补充：命令执行日志自动记录功能
+
+### 21.1 新增功能目标
+
+为了方便回溯 Evolver 的执行历史和效果，新增了命令执行日志自动记录功能。每次执行 `node index.js` 相关命令时，系统会自动在 `memory/` 目录下生成或追加到当天的日志文件 `YYYY-MM-DD.md`，记录每次执行的详细信息。
+
+### 21.2 记录内容
+
+每次命令执行会自动记录以下信息：
+
+1. **基本信息**
+   - 执行的完整命令（如 `node index.js review --approve`）
+   - 执行时间（ISO 格式）
+   - 命令耗时（秒）
+
+2. **Cursor 会话桥接信息**
+   - 源文件路径（Cursor transcript 文件）
+   - 桥接文件路径
+   - 提取的用户记录数量
+
+3. **检测到的信号**
+   - 所有被识别的演化信号列表
+   - 例如：`user_feature_request`, `performance_issue`, `bug_report` 等
+
+4. **选中的 Gene**
+   - Gene ID
+   - Gene 类别（repair, optimize, innovate 等）
+   - Gene 摘要说明
+
+5. **执行结果**
+   - 成功/失败状态（✅ 成功 / ❌ 失败）
+   - 详细的结果说明
+
+### 21.3 涉及文件
+
+新增文件：
+- `src/gep/commandLogger.js` - 核心日志记录模块
+
+修改文件：
+- `index.js` - 在关键执行点集成日志记录调用
+
+### 21.4 支持的命令
+
+以下命令都会自动记录日志：
+
+1. `node index.js` 或 `node index.js run` - 运行演化
+2. `node index.js review` - 查看待审查的更改
+3. `node index.js review --approve` - 批准并固化更改
+4. `node index.js review --reject` - 拒绝并回滚更改
+5. `node index.js solidify` - 固化演化结果
+
+注：`--loop` 循环模式下每次循环不单独记录，避免日志过多。
+
+### 21.5 日志文件位置与格式
+
+日志文件保存在：`memory/YYYY-MM-DD.md`
+
+示例格式：
+
+```markdown
+# Evolver 执行日志 - 2026-04-24
+
+> 本文件自动记录 Evolver 每次执行的命令、结果和关键信息
+
+---
+
+## [15:30:37] node index.js review
+
+**执行时间**: 2026-04-24T07:30:37.615Z
+**耗时**: 0秒
+
+### Cursor 会话桥接
+
+- **源文件**: `C:\Users\Administrator\.cursor\projects\...\xxx.jsonl`
+- **桥接文件**: `e:\git project\evolver\evolver\memory\cursor-session-bridge\latest.jsonl`
+- **记录数**: 5
+
+### 检测到的信号
+
+- `user_feature_request`
+- `code_improvement_suggestion`
+
+### 选中的 Gene
+
+- **ID**: `gene_gep_repair_from_errors`
+- **类别**: repair
+- **摘要**: Repair code based on error signals
+
+### 执行结果
+
+- **状态**: ✅ 成功
+- **详情**: Review: 已经固化，无需审查
+
+---
+```
+
+### 21.6 实现细节
+
+**commandLogger.js 核心函数：**
+
+- `initCommandLog(command, args)` - 初始化日志上下文
+- `logCursorBridge(bridgeInfo)` - 记录 Cursor 会话桥接信息
+- `logSelectedGene(geneId, category, summary)` - 记录选中的 Gene
+- `logSignals(signals)` - 记录检测到的信号
+- `logResult(success, details)` - 记录执行结果
+- `flushCommandLog()` - 将累积的日志写入文件
+
+**index.js 集成点：**
+
+- 在 `main()` 函数开始时初始化日志
+- 在 Cursor 桥接完成后记录桥接信息
+- 在 `solidify` 和 `review` 命令中记录 Gene 和信号
+- 在命令执行成功/失败时记录结果
+- 在命令结束时刷新日志到文件
+
+### 21.7 使用建议
+
+1. **定期查看日志**：通过日志可以回溯 Evolver 的演化历史
+2. **分析演化模式**：观察哪些信号最常被触发，哪些 Gene 最常被选中
+3. **调试问题**：当演化结果不符合预期时，查看日志了解决策过程
+4. **团队协作**：日志可以帮助团队成员了解项目的演化轨迹
+
+### 21.8 注意事项
+
+- 日志文件会自动创建，无需手动维护
+- 每天一个文件，便于按日期查找
+- 日志内容为追加模式，不会覆盖已有内容
+- Loop 模式下不会为每次循环单独记录，避免日志过多
+- 日志文件与 Cursor Hook 生成的日志文件共用同一目录，但格式和用途不同
+
+---
